@@ -32,7 +32,7 @@ class AlgorithmConfig:
     COOLING_RATE: float = 0.97
     ITERATIONS: int = 10000
     RANDOM_SEED: Optional[int] = None
-    START_FROM_RANDOM: bool = False
+    START_FROM_RANDOM: bool = True
     FORCE_MOVE_PROB: float = 0.30
     RANDOM_VIOLATION_PROB: float = 0.10
     REHEAT_INTERVAL: int = 1000

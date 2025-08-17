@@ -1,47 +1,47 @@
 Room 1:
 - Judges:
-  - Dr. Alan Turing (Algolabs / Algorithm Design)
+  - Tim Berners-Lee (WebCreate Solutions / Web Development)
   - Dr. Sarah Chen  // not affiliated with a sponsoring company
+  - Dr. James Patel  // not affiliated with a sponsoring company
 
 - Participants:
-  - Alice Johnson (Algorithm Design)
-  - Bob Smith (Algorithm Design)
-  - Grace Hopper (Algorithm Design)
-  - Maya Patel (Algorithm Design)
-  - Rosa Kim (Algorithm Design)
+  - Liam O'Connor (Cybersecurity)
+  - Quinn Taylor (Cybersecurity)
+  - Iris Chang (Web Development)
+  - Peter Zhang (Web Development)
+  - Jack Ryan (Web Development)
 
 Room 2:
 - Judges:
-  - Prof. Donald Knuth (StructuraTech / Data Structures)
+  - Dr. Yann LeCun (DeepVision AI / Machine Learning)
   - Dr. Maria Gomez  // not affiliated with a sponsoring company
 
 - Participants:
-  - Charlie Brown (Data Structures)
-  - Diana Prince (Data Structures)
-  - Henry Ford (Data Structures)
-  - Noah Garcia (Data Structures)
-  - Samir Ahmed (Data Structures)
+  - Frank Miller (Machine Learning)
+  - Olivia Martinez (Machine Learning)
+  - Eve Wilson (Machine Learning)
+  - Tina Nguyen (Machine Learning)
 
 Room 3:
 - Judges:
-  - Tim Berners-Lee (WebCreate Solutions / Web Development)
-  - Dr. Yann LeCun (DeepVision AI / Machine Learning)
+  - Prof. Donald Knuth (StructuraTech / Data Structures)
 
 - Participants:
-  - Eve Wilson (Machine Learning)
-  - Frank Miller (Machine Learning)
-  - Olivia Martinez (Machine Learning)
-  - Tina Nguyen (Machine Learning)
-  - Iris Chang (Web Development)
-  - Jack Ryan (Web Development)
+  - Charlie Brown (Data Structures)
+  - Noah Garcia (Data Structures)
+  - Samir Ahmed (Data Structures)
+  - Diana Prince (Data Structures)
+  - Henry Ford (Data Structures)
 
 Room 4:
 - Judges:
-  - Dr. James Patel  // not affiliated with a sponsoring company
+  - Dr. Alan Turing (Algolabs / Algorithm Design)
   - Dr. Alex Rivera  // not affiliated with a sponsoring company
 
 - Participants:
+  - Grace Hopper (Algorithm Design)
   - Karen Lee (Cybersecurity)
-  - Liam O'Connor (Cybersecurity)
-  - Peter Zhang (Web Development)
-  - Quinn Taylor (Cybersecurity)
+  - Maya Patel (Algorithm Design)
+  - Alice Johnson (Algorithm Design)
+  - Rosa Kim (Algorithm Design)
+  - Bob Smith (Algorithm Design)
