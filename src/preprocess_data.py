@@ -10,23 +10,13 @@ HACKATHON CONTEXT:
 - Specialized judges work at the sponsoring companies and judge their company's problems
 - Flexible judges work at universities/academic institutions and can judge any problem
 
-Expected JSON formats produced by this module:
-
-- participants.json:
-  {
-    "<participant_id>": {"problem": "<company_name>", "name": "<optional name>", ...metadata}
-  }
-
-- judges.json:
-  {
-    "<judge_id>": {"name": "<optional name>", "problem": "<company_name_or_null>"}
-  }
 """
 
 from __future__ import annotations
 
 import os
 import json
+import logging
 from typing import Dict, Any, Tuple, Optional, List
 from dataclasses import dataclass
 
@@ -36,43 +26,68 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 
 # Structured outputs for the LLM calls
 class ParticipantInfo(BaseModel):
     """Information about a single participant."""
 
+    full_name: Optional[str] = Field(
+        default=None, description="Optional display/full name of the participant"
+    )
+    participant_id: str = Field(
+        description="The unique ID for the participant, using P1, P2, P3, etc."
+    )
     problem: str = Field(description="The name of this participant's project")
+    problem_id: str = Field(description="The unique ID for the problem")
     sponsoring_company: Optional[str] = Field(
         default=None, description="The sponsoring company name for this participant's project"
-    )
-    name: Optional[str] = Field(
-        default=None, description="Optional display/full name of the participant"
     )
 
 
 class JudgeInfo(BaseModel):
     """Information about a single judge."""
 
-    name: Optional[str] = Field(default=None, description="Optional display/full name of the judge")
+    full_name: Optional[str] = Field(
+        default=None, description="Optional display/full name of the judge"
+    )
+    judge_id: str = Field(description="The unique ID for the judge")
     company: Optional[str] = Field(
         default=None,
         description="Company name for specialized judges (judges working at sponsoring companies), null for flexible judges (university/academic judges)",
     )
+    problem: Optional[str] = Field(
+        default=None,
+        description="The name of the problem that the judge is judging, if he is a specialized judge, null for flexible judges",
+    )
+    problem_id: str = Field(description="The unique ID for the problem")
 
 
 class ParticipantsData(BaseModel):
-    """Collection of all participants with their IDs as keys."""
+    """Collection of all participants."""
 
-    participants: Dict[str, ParticipantInfo] = Field(
-        description="Dictionary mapping participant IDs to participant information"
-    )
+    participants: list[ParticipantInfo] = Field(description="List of participants")
 
 
 class JudgesData(BaseModel):
-    """Collection of all judges with their IDs as keys."""
+    """Collection of all judges."""
 
-    judges: Dict[str, JudgeInfo] = Field(
-        description="Dictionary mapping judge IDs to judge information"
+    judges: list[JudgeInfo] = Field(description="List of judges")
+
+
+class CompanyToProblemMapping(BaseModel):
+
+    company: str = Field(description="The name of the company")
+    problem: str = Field(description="The name of the problem that the company is tackling")
+    problem_id: str = Field(description="The unique ID for the problem")
+
+
+class CompanyToProblemData(BaseModel):
+    """Collection of all company to problem mappings."""
+
+    mapping: list[CompanyToProblemMapping] = Field(
+        description="List of company to problem mappings"
     )
 
 
@@ -96,13 +111,20 @@ def _ensure_dirs(inputs_dir: str, processed_dir: str) -> None:
     processed_dir_abs = (
         processed_dir if os.path.isabs(processed_dir) else os.path.join(base, processed_dir)
     )
+    logger.debug(
+        "Ensuring directories exist: inputs_dir=%s, processed_dir=%s",
+        inputs_dir_abs,
+        processed_dir_abs,
+    )
     os.makedirs(inputs_dir_abs, exist_ok=True)
     os.makedirs(processed_dir_abs, exist_ok=True)
+    logger.debug("Directories ensured")
 
 
 def _get_gemini_client():
     """Get Google Gemini client using API key from environment."""
     try:
+        logger.info("Initializing Gemini client")
         import google.genai as genai
 
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -113,31 +135,12 @@ def _get_gemini_client():
             )
 
         client = genai.Client(api_key=api_key)
+        logger.info("Gemini client initialized")
         return client
     except ImportError:
         raise ImportError(
             "google-genai package not found. " "Please install it with: uv add google-genai"
         )
-
-
-def _maybe_load_existing_json(text: str) -> Optional[Dict[str, Any]]:
-    """Try to load text as JSON if it's already in the correct format."""
-    try:
-        obj = json.loads(text.strip())
-        if isinstance(obj, dict):
-            return obj
-        return None
-    except (json.JSONDecodeError, ValueError):
-        return None
-
-
-def _extract_problems_from_participants(participants_data: ParticipantsData) -> List[str]:
-    """Extract unique company names from participants data."""
-    companies = set()
-    for participant in participants_data:
-        if participant.sponsoring_company is not None:
-            companies.add(participant.sponsoring_company)
-    return list(companies)
 
 
 # Function to extract structured data from text using Gemini LLM with Pydantic schema
@@ -148,42 +151,100 @@ def _extract_with_llm(
     response_schema: type[BaseModel],
     config: PreprocessingConfig,
     known_companies: Optional[list] = None,
+    company_to_problem_data: Optional[CompanyToProblemData] = None,
 ) -> BaseModel:
     """Extract structured data from text using Gemini LLM with Pydantic schema."""
 
+    logger.info("Extracting %s data with LLM", data_type)
+    logger.debug("Input text length: %d characters", len(text) if text is not None else 0)
+
     if data_type == "company_to_problem":
         prompt = f"""
-        You are an expert at extracting structured information from raw text. The text describes a list of companies in a hackathon, also giving information on the problem that they are tackling (and potentially the sponsoring company).
-        
+        You are an expert at extracting structured information from raw text. The text describes a list of companies in a hackathon, also giving information on the problem that they are sponsoring / proposing.
+
         Given the following text containing company descriptions, extract the following structured information 
         for each company. 
-        """
-        # TODO: Implement this
 
-    if data_type == "participants":
+        - company: the name of the company
+        - problem: the name of the problem that the company is sponsoring / proposing
+        - problem_id: create a unique ID for each problem, using X1, X2, X3, etc.
+
+        Raw text: 
+        {text}
+
+        Return the data in JSON format.
+        """
+
+    elif data_type == "participants":
+
+        assert (
+            known_companies is not None
+        ), "known_companies must be provided for the participants extraction"
+
+        assert (
+            company_to_problem_data is not None
+        ), "company_to_problem_data must be provided for the participants extraction"
+
+        # Prepare a readable mapping string to guide the model to use exact names
+        mapping_str = None
+        if company_to_problem_data is not None:
+            try:
+                mapping_items = [
+                    f"- {m.company}: {m.problem} (ID: {m.problem_id})"
+                    for m in company_to_problem_data.mapping
+                ]
+                mapping_str = "\n".join(mapping_items)
+            except Exception:
+                mapping_str = str(company_to_problem_data)
+
+        known_companies_str = ", ".join(known_companies) if known_companies else ""
+
         prompt = f"""
         You are an expert at extracting structured information from raw text. The text describes a list of participants in a hackathon, also giving information on the problem that they are tackling (and potentially the sponsoring company).
         
-        Given the following text containing participant descriptions, extract the following structured information 
-        for each participant. 
+        Given the following text containing participant descriptions, extract the following structured information for each participant. 
         
+        - full_name: the name of the participant (if any) --> If not Name is provided, assign a generic sequential ID to the participant (e.g. p1, p2, p3, etc.)
+        - participant_id: create a unique ID for each participant, using P1, P2, P3, etc.
         - problem: the name of the problem that the participant is tackling
+        - problem_id: the unique ID for the problem, use the same ID as the one in the mapping for the problem. If the problem is not sponsored by a company, create a new ID for the problem that is not in the mapping.
         - sponsoring_company: the sponsoring company of the problem (if any)
-        - name: the name of the participant (if any) --> If not Name is provided, assign a generic sequential ID to the participant (e.g. p1, p2, p3, etc.)
-        
+                
         CONTEXT: In this hackathon, problems can be sponsored by companies. Each participant works on 
-        a problem/project that may be associated with a company, but also has a freedom to work on his/her own problem, not related to any company.
+        a problem/project that may be associated with a company, but can also work on their own problem not related to any company.
+
+        IMPORTANT RULES:
+        - If the participant is working on a sponsored problem and a sponsoring company can be inferred, use the EXACT company and problem names from the mapping below.
+        - If the participant is working on their own/independent problem, set sponsoring_company to null and set problem based on the raw text as written. Create a new problem ID for the problem that is not in the mapping.
+        - List of sponsoring companies (for reference): {known_companies_str}
+        - Mapping company -> problem (use exact strings):\n{mapping_str}
 
         Raw text:
         {text}
         
         Return the data in JSON format.
         """
-    else:  # judges
+    elif data_type == "judges":
 
         assert (
             known_companies is not None
         ), "known_companies must be provided for the judges extraction"
+
+        assert (
+            company_to_problem_data is not None
+        ), "company_to_problem_data must be provided for the judges extraction"
+
+        # Prepare a readable mapping string
+        mapping_str = None
+        if company_to_problem_data is not None:
+            try:
+                mapping_items = [
+                    f"- {m.company}: {m.problem} (ID: {m.problem_id})"
+                    for m in company_to_problem_data.mapping
+                ]
+                mapping_str = "\n".join(mapping_items)
+            except Exception:
+                mapping_str = str(company_to_problem_data)
 
         prompt = f"""
         You are an expert at extracting structured information from raw text.
@@ -192,15 +253,21 @@ def _extract_with_llm(
 
         TASK: Given the following text containing judge descriptions, extract the following structured information 
         for each judge. 
-        - name: the name of the judge (REQUIRED - extract from text, never use generic names)
+        - full_name: the name of the judge (REQUIRED - extract from text, never use generic names)
+        - judge_id: create a unique ID for each judge, using J1, J2, J3, etc.
         - company: The company name if they work at one of the sponsoring companies, or null if they are university/academic/independent judges
-        
+        - problem: If company is set (specialized judge), set to the EXACT problem name from the mapping for that company; otherwise set to null
+        - problem_id: the unique ID for the problem, use the same ID as the one in the mapping for the problem. If the problem is null, set also the problem_id to null.
+
         CONTEXT: In this hackathon, problems are sponsored by companies. Judges can be either:
         1. SPECIALIZED: Work at one of the sponsoring companies and judge their company's problem
         2. FLEXIBLE: Work at universities or other non-sponsoring organizations and can judge any problem
         
         List of sponsoring companies: {', '.join(known_companies)}
-        Raw text: {text}
+        Mapping of companies to the problems they are sponsoring (use exact strings):
+        {mapping_str}
+        Raw text: 
+        {text}
         
         RULES for determining specialization:
         - If the judge works at a company that matches one of the known sponsoring companies, set that company as their problem. USE THE EXACT NAME OF THE COMPANY as given in the list of known companies.
@@ -210,8 +277,12 @@ def _extract_with_llm(
         
         Return the data in JSON format.
         """
+    else:
+        logger.error("Invalid data type: %s", data_type)
+        raise ValueError(f"Invalid data type: {data_type}")
 
     try:
+        logger.debug("Prompt: %s", prompt)
         response = client.models.generate_content(
             model=config.model,
             contents=prompt,
@@ -221,9 +292,12 @@ def _extract_with_llm(
                 "temperature": config.temperature,
             },
         )
+        logger.debug("Response: %s", response.parsed.model_dump_json(indent=2))
+        logger.info("LLM extraction for %s completed", data_type)
         return response.parsed
 
     except Exception as e:
+        logger.exception("LLM extraction for %s failed", data_type)
         raise ValueError(f"Failed to extract {data_type} data using LLM: {str(e)}")
 
 
@@ -231,6 +305,7 @@ def _extract_with_llm(
 def preprocess_files(
     judges_input_path: str,
     participants_input_path: str,
+    company_to_problem_input_path: str,
     processed_dir: str = "data/processed",
     config: Optional[PreprocessingConfig] = None,
 ) -> Tuple[str, str]:  # judges_out_path, participants_out_path
@@ -245,6 +320,7 @@ def preprocess_files(
     Args:
         judges_input_path: Path to raw judges file (text or JSON)
         participants_input_path: Path to raw participants file (text or JSON)
+        company_to_problem_input_path: Path to raw company to problem mapping file (text or JSON)
         processed_dir: Directory to save processed JSON files
         config: Optional preprocessing configuration
 
@@ -258,59 +334,110 @@ def preprocess_files(
     base = _project_root()
     inputs_dir = os.path.dirname(judges_input_path) or os.path.join(base, "data/inputs")
     _ensure_dirs(inputs_dir, processed_dir)
+    logger.info("Starting preprocessing")
+    logger.debug(
+        "Input paths: judges=%s, participants=%s, company_to_problem=%s; processed_dir=%s",
+        judges_input_path,
+        participants_input_path,
+        company_to_problem_input_path,
+        processed_dir,
+    )
 
     # Read input files
     with open(judges_input_path, "r", encoding="utf-8") as f:
         judges_raw = f.read()
     with open(participants_input_path, "r", encoding="utf-8") as f:
         participants_raw = f.read()
-
-    # Check if inputs are already valid JSON
-    judges_existing = _maybe_load_existing_json(judges_raw)
-    participants_existing = _maybe_load_existing_json(participants_raw)
+    with open(company_to_problem_input_path, "r", encoding="utf-8") as f:
+        company_to_problem_raw = f.read()
+    logger.debug(
+        "Loaded inputs: judges=%d chars, participants=%d chars, company_to_problem=%d chars",
+        len(judges_raw),
+        len(participants_raw),
+        len(company_to_problem_raw),
+    )
 
     # Get Gemini client for LLM processing
     client = _get_gemini_client()
+    logger.info("Gemini client ready")
 
-    # STAGE 1: Process participants first to extract company list
-    if participants_existing is not None:
-        # Already valid JSON, validate and normalize format
-        participants_data = ParticipantsData(participants=participants_existing)
-        known_companies = _extract_problems_from_participants(participants_existing)
-    else:
-        # Extract using LLM
-        participants_data = _extract_with_llm(
-            client, participants_raw, "participants", ParticipantsData, config
-        )
-        known_companies = _extract_problems_from_participants(participants_data.participants)
+    # STAGE 1: Process company to problem mapping
+    logger.info("Stage 1: Extracting company-to-problem mapping")
+    company_to_problem_data = _extract_with_llm(
+        client=client,
+        text=company_to_problem_raw,
+        data_type="company_to_problem",
+        response_schema=CompanyToProblemData,
+        config=config,
+    )
 
-    # STAGE 2: Process judges using the known company list
-    if judges_existing is not None:
-        # Already valid JSON, validate and normalize format
-        judges_data = JudgesData(judges=judges_existing)
-    else:
-        # Extract using LLM with known companies context
-        judges_data = _extract_with_llm(
-            client, judges_raw, "judges", JudgesData, config, known_companies
-        )
+    # Derive known companies directly from the mapping extraction
+    known_companies = [m.company for m in company_to_problem_data.mapping]
+    logger.info(
+        "Extracted %d company-to-problem mappings; %d known companies",
+        len(company_to_problem_data.mapping),
+        len(known_companies),
+    )
+    logger.debug(
+        "Full company-to-problem mapping: %s", company_to_problem_data.model_dump_json(indent=2)
+    )
+
+    # STAGE 2: Process participants using the mapping and known companies
+    logger.info("Stage 2: Extracting participants")
+    participants_data = _extract_with_llm(
+        client,
+        participants_raw,
+        "participants",
+        ParticipantsData,
+        config,
+        known_companies=known_companies,
+        company_to_problem_data=company_to_problem_data,
+    )
+    logger.info(
+        "Extracted %d participants",
+        len(participants_data.participants),
+    )
+    logger.debug("Full participants data: %s", participants_data.model_dump_json(indent=2))
+
+    # STAGE 3: Process judges using the known company list and mapping
+    logger.info("Stage 3: Extracting judges")
+    judges_data = _extract_with_llm(
+        client,
+        judges_raw,
+        "judges",
+        JudgesData,
+        config,
+        known_companies=known_companies,
+        company_to_problem_data=company_to_problem_data,
+    )
+    logger.info("Extracted %d judges", len(judges_data.judges))
+    logger.debug("Full judges data: %s", judges_data.model_dump_json(indent=2))
 
     # Validate that we have data
     if not participants_data.participants:
+        logger.error("No participants were extracted from the input")
         raise ValueError("No participants were extracted from the input")
     if not judges_data.judges:
+        logger.error("No judges were extracted from the input")
         raise ValueError("No judges were extracted from the input")
 
     # Save processed files
     participants_out_path = os.path.join(processed_dir, "participants.json")
     judges_out_path = os.path.join(processed_dir, "judges.json")
+    logger.info(
+        "Saving processed files: judges=%s, participants=%s",
+        judges_out_path,
+        participants_out_path,
+    )
 
     with open(participants_out_path, "w", encoding="utf-8") as f:
-        json.dump(participants_data, f, indent=2)
+        json.dump(participants_data.model_dump(), f, indent=2)
 
     with open(judges_out_path, "w", encoding="utf-8") as f:
-        json.dump(judges_data, f, indent=2)
+        json.dump(judges_data.model_dump(), f, indent=2)
 
     # Return the paths to the processed files
+    logger.info("Preprocessing completed successfully")
     return judges_out_path, participants_out_path
 
 
@@ -326,6 +453,11 @@ def main():
         "--participants", required=True, help="Path to participants raw text or JSON file"
     )
     parser.add_argument(
+        "--company-to-problem",
+        required=True,
+        help="Path to company-to-problem raw text or JSON file",
+    )
+    parser.add_argument(
         "--processed-dir",
         default="data/processed",
         help="Output directory for processed JSON files",
@@ -339,8 +471,21 @@ def main():
         default=0.0,
         help="Temperature for LLM generation (0.0 for deterministic)",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"],
+        help="Logging level",
+    )
 
     args = parser.parse_args()
+
+    # Configure logging
+    numeric_level = getattr(logging, args.log_level.upper(), logging.INFO)
+    logging.basicConfig(
+        level=numeric_level,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
 
     config = PreprocessingConfig(model=args.model, temperature=args.temperature)
 
@@ -349,19 +494,24 @@ def main():
         _ensure_dirs("data/inputs", args.processed_dir)
 
         # Process files
-        judges_data, participants_data = preprocess_files(
-            args.judges, args.participants, args.processed_dir, config
+        judges_out_path, participants_out_path = preprocess_files(
+            args.judges,
+            args.participants,
+            args.company_to_problem,
+            processed_dir=args.processed_dir,
+            config=config,
         )
 
         # Output result paths as JSON for easy consumption
         result = {
-            "judges": judges_data.judges,
-            "participants": participants_data.participants,
+            "judges_path": judges_out_path,
+            "participants_path": participants_out_path,
             "status": "success",
         }
         print(json.dumps(result, indent=2))
 
     except Exception as e:
+        logger.exception("Preprocessing failed")
         # Output error information
         error_result = {"error": str(e), "status": "failed"}
         print(json.dumps(error_result, indent=2))
