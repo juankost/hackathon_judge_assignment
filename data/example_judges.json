@@ -1,0 +1,32 @@
+{
+  "J001": {
+    "problem": "Algorithm_Design",
+    "name": "Dr. Alan Turing",
+    "expertise_level": "expert"
+  },
+  "J002": {
+    "problem": "Data_Structures",
+    "name": "Prof. Donald Knuth"
+  },
+  "J003": {
+    "problem": "Machine_Learning",
+    "name": "Dr. Yann LeCun"
+  },
+  "J004": {
+    "problem": "Web_Development",
+    "name": "Tim Berners-Lee"
+  },
+  "J005": {
+    "problem": "Algorithm_Design",
+    "name": "Dr. Cormen"
+  },
+  "J006": {
+    "problem": null,
+    "name": "Dr. Flexible Judge 1",
+    "can_judge_all": true
+  },
+  "J007": {
+    "problem": null,
+    "name": "Dr. Flexible Judge 2"
+  }
+}
