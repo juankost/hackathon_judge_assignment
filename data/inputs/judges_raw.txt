@@ -1,7 +1,0 @@
-Dr. Alan Turing - Expert in Algorithm Design and theoretical computer science, professor at Cambridge
-Prof. Donald Knuth - Specialist in Data Structures and algorithms, author of The Art of Computer Programming
-Dr. Yann LeCun - Machine Learning and deep learning expert, Director of AI Research at Meta
-Tim Berners-Lee - Web Development pioneer, inventor of the World Wide Web
-Dr. Sarah Chen - Algorithm Design specialist, focuses on optimization problems
-Dr. Flexible Judge 1 - Can judge any category, generalist background in computer science
-Dr. Flexible Judge 2 - Experienced in multiple domains, 20 years of industry experience
