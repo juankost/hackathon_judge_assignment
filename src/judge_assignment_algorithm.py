@@ -504,41 +504,16 @@ class JudgeAssignmentAlgorithm:
 
 def load_preprocessed_participant_data(filename: str) -> List[Participant]:
     """Load participants from a JSON file."""
-
-    # NOTE: Output format from preprocessing is the following:
-    # extracted_participant_data: Dict[str, ParticipantInfo]
     from src.preprocess_data import ParticipantsData
 
-    # Load the data
     with open(filename, "r") as f:
         data = json.load(f)
     participants_data = ParticipantsData(**data)
 
-    # Create unique IDs for problems
-    problems = set(p.problem for p in participants_data.participants.values())
-    problem_id_to_problem = {p.problem: f"P{i+1}" for i, p in enumerate(problems)}
-
-    # Create participants from the preprocessed data
-    participants: List[Participant] = []
-    for id, info in participants_data.participants.items():
-
-        participant_id = id
-        full_name = info.name
-        problem_id = problem_id_to_problem[info.problem]
-        problem = info.problem
-        sponsoring_company = info.sponsoring_company
-
-        participants.append(
-            Participant(
-                participant_id=participant_id,
-                full_name=full_name,
-                problem_id=problem_id,
-                problem=problem,
-                sponsoring_company=sponsoring_company,
-            )
-        )
-
-    return participants
+    # Since Participant and ParticipantInfo have the same fields, use **vars()
+    return [
+        Participant(**participant.model_dump()) for participant in participants_data.participants
+    ]
 
 
 def load_preprocessed_judge_data(filename: str) -> Tuple[List[Judge], List[Judge]]:
@@ -552,30 +527,13 @@ def load_preprocessed_judge_data(filename: str) -> Tuple[List[Judge], List[Judge
     specialized_judges: List[Judge] = []
     flexible_judges: List[Judge] = []
 
-    # What we need for the Judge class:
-    # judge_id: str
-    # judge_type: JudgeType
-    # full_name: Optional[str] = None
-    # affiliation: Optional[str] = None  # company or university they are associated with
-    # problem_id: Optional[str] = None  # For specialized judges, this is their assigned problem
-    # problem: Optional[str] = None  # For specialized judges, this is their assigned problem
-
-    # What is in the JudgeInfo?
-    # name: Optional[str] = Field(default=None, description="Optional display/full name of the judge")
-    # company: Optional[str] = Field(
-    #     default=None,
-    #     description="Company name for specialized judges (judges working at sponsoring companies), null for flexible judges (university/academic judges)",
-    # )
-
-    for id, info in judges_data.judges.items():
-        judge_id = id
-        full_name = info.name
-        affiliation = info.company
+    for judge in judges_data.judges:
+        judge_id = judge.judge_id
+        full_name = judge.full_name
+        affiliation = judge.company
         judge_type = JudgeType.FLEXIBLE if affiliation is None else JudgeType.SPECIALIZED
-
-        # TODO: From the affiliation, we need to determine the problem that is relevant for the judge
-        problem = None
-        problem_id = None
+        problem = judge.problem
+        problem_id = judge.problem_id
 
         if judge_type == JudgeType.FLEXIBLE:
             flexible_judges.append(
@@ -604,7 +562,7 @@ def load_preprocessed_judge_data(filename: str) -> Tuple[List[Judge], List[Judge
 
 
 def _load_or_preprocess_data(
-    participants_path: str, judges_path: str
+    participants_path: str, judges_path: str, company_to_problem_path: Optional[str]
 ) -> Tuple[List[Participant], List[Judge], List[Judge]]:
     """Load or preprocess the data."""
     try:
@@ -617,10 +575,16 @@ def _load_or_preprocess_data(
 
         from src.preprocess_data import preprocess_files
 
+        if not company_to_problem_path:
+            raise ValueError(
+                "company_to_problem input path is required when preprocessing raw inputs"
+            )
+
         processed_dir = os.path.join(_project_root(), "data/processed")
         processed_judges_path, processed_participants_path = preprocess_files(
             judges_input_path=judges_path,
             participants_input_path=participants_path,
+            company_to_problem_input_path=company_to_problem_path,
             processed_dir=processed_dir,
         )
 
@@ -633,6 +597,29 @@ def _load_or_preprocess_data(
     return participants, specialized_judges, flexible_judges
 
 
+def _save_results_markdown(groups: List[ParticipantGroup], output_path: str) -> None:
+    """Save a human-readable Markdown summary of room assignments."""
+    lines: List[str] = []
+    for i, group in enumerate(groups, start=1):
+        lines.append(f"Room {i}:")
+        lines.append("- Judges:")
+        for judge in group.assigned_judges:
+            judge_name = judge.display_name()
+            if judge.affiliation and judge.problem:
+                lines.append(f"  - {judge_name} ({judge.affiliation} / {judge.problem})")
+            else:
+                lines.append(f"  - {judge_name}  // not affiliated with a sponsoring company")
+        lines.append("")
+        lines.append("- Participants:")
+        for participant in group.participants:
+            display_name = participant.display_name()
+            lines.append(f"  - {display_name} ({participant.problem_id})")
+        lines.append("")
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines).strip() + "\n")
+
+
 def main():
     """Main function with CLI support."""
     parser = argparse.ArgumentParser(
@@ -640,6 +627,11 @@ def main():
     )
     parser.add_argument("--judges", type=str, help="Path to judges JSON or raw file")
     parser.add_argument("--participants", type=str, help="Path to participants JSON or raw file")
+    parser.add_argument(
+        "--company-to-problem",
+        type=str,
+        help="Path to company-to-problem JSON or raw file (required if preprocessing raw inputs)",
+    )
     parser.add_argument(
         "--room-group-size",
         type=int,
@@ -653,9 +645,19 @@ def main():
     )
     parser.add_argument("--config", type=str, help="Path to JSON file with algorithm configuration")
     parser.add_argument("--seed", type=int, help="Random seed for reproducible results")
+    parser.add_argument(
+        "--example",
+        action="store_true",
+        help="Use bundled example data from the example directory",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        help="Directory to write outputs (default: data/outputs under project root)",
+    )
 
     args = parser.parse_args()
-    if not args.judges or not args.participants:
+    if not args.example and (not args.judges or not args.participants):
         parser.error("--judges and --participants are required unless using --example")
 
     # Ensure data directories exist
@@ -678,12 +680,21 @@ def main():
         config.RANDOM_SEED = args.seed
 
     # Attempt to load data; if it fails, preprocess automatically
-    participants_path = _resolve_path(args.participants)
-    judges_path = _resolve_path(args.judges)
+    if args.example:
+        base = _project_root()
+        judges_path = os.path.join(base, "example", "judges_info.txt")
+        participants_path = os.path.join(base, "example", "participants_info.txt")
+        company_to_problem_path = os.path.join(base, "example", "company_to_problem.txt")
+    else:
+        participants_path = _resolve_path(args.participants)
+        judges_path = _resolve_path(args.judges)
+        company_to_problem_path = (
+            _resolve_path(args.company_to_problem) if args.company_to_problem else None
+        )
 
     # Load or preprocess the data
     participants, specialized_judges, flexible_judges = _load_or_preprocess_data(
-        participants_path, judges_path
+        participants_path, judges_path, company_to_problem_path
     )
 
     # Extract unique problems
@@ -702,10 +713,21 @@ def main():
     groups, stats = algorithm.solve(use_optimization=not args.no_optimization)
 
     # Save results
-    results_path = os.path.join(_project_root(), "data/outputs", "assignment_results.json")
+    output_dir = (
+        _resolve_path(args.output_dir)
+        if getattr(args, "output_dir", None)
+        else os.path.join(_project_root(), "data/outputs")
+    )
+    os.makedirs(output_dir, exist_ok=True)
+    results_path = os.path.join(output_dir, "assignment_results.json")
     with open(results_path, "w") as f:
         json.dump({"groups": _to_json_compatible(groups), "stats": stats}, f, indent=2)
     logging.info(f"Saved results to {results_path}")
+
+    # Save Markdown summary
+    md_path = os.path.join(output_dir, "assignment_results.md")
+    _save_results_markdown(groups, md_path)
+    logging.info(f"Saved Markdown summary to {md_path}")
 
     # Print results summary to logs
     logging.info("=== Judge Assignment Solution ===")
