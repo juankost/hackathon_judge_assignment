@@ -20,10 +20,7 @@ import sys
 import logging
 import os
 
-from utils import _ensure_data_dirs, _resolve_path, _project_root, _to_json_compatible
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+from src.utils import _ensure_data_dirs, _resolve_path, _project_root, _to_json_compatible
 
 
 @dataclass
@@ -59,9 +56,9 @@ DEFAULT_CONSTRAINT_COSTS: Dict[ConstraintViolationType, float] = {
 @dataclass
 class Participant:
     participant_id: str
-    full_name: Optional[str] = None
     problem_id: str
     problem: str
+    full_name: Optional[str] = None
     sponsoring_company: Optional[str] = None
 
     def __repr__(self):
@@ -655,10 +652,22 @@ def main():
         type=str,
         help="Directory to write outputs (default: data/outputs under project root)",
     )
-
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"],
+        help="Logging level",
+    )
     args = parser.parse_args()
     if not args.example and (not args.judges or not args.participants):
         parser.error("--judges and --participants are required unless using --example")
+
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"],
+        help="Logging level",
+    )
 
     # Ensure data directories exist
     _ensure_data_dirs()
@@ -682,6 +691,7 @@ def main():
     # Attempt to load data; if it fails, preprocess automatically
     if args.example:
         base = _project_root()
+        logging.info("Root directory: %s", base)
         judges_path = os.path.join(base, "example", "judges_info.txt")
         participants_path = os.path.join(base, "example", "participants_info.txt")
         company_to_problem_path = os.path.join(base, "example", "company_to_problem.txt")

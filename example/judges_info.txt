@@ -2,6 +2,7 @@ Dr. Alan Turing - Expert in Algorithm Design and theoretical computer science, w
 Prof. Donald Knuth - Specialist in Data Structures and algorithms, advisor at StructuraTech
 Dr. Yann LeCun - Machine Learning and deep learning expert, research lead at DeepVision AI
 Tim Berners-Lee - Web Development pioneer, currently at WebCreate Solutions
-Dr. Sarah Chen - Algorithm Design specialist, focuses on optimization problems
+Dr. Sarah Chen - affiliated with Stanford University, can judge any category
 Dr. Maria Gomez - Can judge any category, generalist background in computer science
-Dr. James Patel - Experienced in multiple domains, 20 years of industry experience
+Dr. James Patel - Experienced in multiple domains, can judge any category, 20 years of industry experience
+Dr. Alex Rivera - Can judge any category, background in systems and security

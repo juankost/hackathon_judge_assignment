@@ -13,7 +13,7 @@ def _ensure_data_dirs() -> None:
 
 def _project_root() -> str:
     """Return absolute path to the project root (one level up from this file's directory)."""
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 
 
 def _resolve_path(path: str) -> str:

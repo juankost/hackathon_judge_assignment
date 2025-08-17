@@ -8,3 +8,13 @@ Grace Hopper - Algorithm Design compiler project, developing a new parsing techn
 Henry Ford - Data Structures database indexing system, optimizing query performance
 Iris Chang - Web Development frontend application, building a React-based dashboard
 Jack Ryan - Web application backend development, implementing a RESTful API with Node.js
+Karen Lee - Working on Cybersecurity project, performing vulnerability assessment and building an automated scanner
+Liam O'Connor - Cybersecurity category, developing a network intrusion detection system
+Maya Patel - Working on Algorithm Design project, designing dynamic programming solutions for scheduling
+Noah Garcia - Data Structures project, implementing a concurrent queue
+Olivia Martinez - Machine Learning project, applying reinforcement learning to robotic control
+Peter Zhang - Web Development project, building a progressive web app with offline support
+Quinn Taylor - Working on Cybersecurity project, implementing and analyzing a cryptographic protocol
+Rosa Kim - Algorithm Design project, heuristic search for optimal path planning
+Samir Ahmed - Data Structures project, designing a compressed trie for autocomplete
+Tina Nguyen - Machine Learning project, transfer learning for audio classification
