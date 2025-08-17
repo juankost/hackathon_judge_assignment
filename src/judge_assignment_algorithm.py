@@ -8,7 +8,7 @@ Also writes results to `data/outputs/assignment_results.json`.
 """
 
 from typing import List, Dict, Set, Tuple, Optional, Any
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from collections import defaultdict
 import random
 import math
@@ -20,6 +20,7 @@ import sys
 import logging
 import os
 
+from utils import _ensure_data_dirs, _resolve_path, _project_root, _to_json_compatible
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -57,39 +58,41 @@ DEFAULT_CONSTRAINT_COSTS: Dict[ConstraintViolationType, float] = {
 
 @dataclass
 class Participant:
-    id: str
+    participant_id: str
+    full_name: Optional[str] = None
     problem_id: str
-    name: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    problem: str
+    sponsoring_company: Optional[str] = None
 
     def __repr__(self):
-        return f"Participant({self.id}, problem={self.problem_id})"
+        return f"Participant({self.participant_id}, problem={self.problem_id})"
 
     def display_name(self) -> str:
         """Return name if available, otherwise ID."""
-        return self.name if self.name else self.id
+        return self.full_name if self.full_name else self.participant_id
 
 
 @dataclass
 class Judge:
-    id: str
+    judge_id: str
     judge_type: JudgeType
-    problem: Optional[str]  # For specialized judges, this is their assigned problem
-    name: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    full_name: Optional[str] = None
+    affiliation: Optional[str] = None  # company or university they are associated with
+    problem_id: Optional[str] = None  # For specialized judges, this is their assigned problem
+    problem: Optional[str] = None  # For specialized judges, this is their assigned problem
 
     def __repr__(self):
-        return f"Judge({self.id}, type={self.judge_type}, problem={self.problem})"
+        return f"Judge({self.judge_id}, type={self.judge_type}, problem={self.problem})"
 
     def __hash__(self):
-        return hash(self.id)
+        return hash(self.judge_id)
 
     def __eq__(self, other):
-        return isinstance(other, Judge) and self.id == other.id
+        return isinstance(other, Judge) and self.judge_id == other.judge_id
 
     def display_name(self) -> str:
         """Return name if available, otherwise ID."""
-        return self.name if self.name else self.id
+        return self.full_name if self.full_name else self.judge_id
 
 
 @dataclass
@@ -499,149 +502,135 @@ class JudgeAssignmentAlgorithm:
         return total_cost
 
 
-def load_participants_from_json(filename: str) -> List[Participant]:
+def load_preprocessed_participant_data(filename: str) -> List[Participant]:
     """Load participants from a JSON file."""
+
+    # NOTE: Output format from preprocessing is the following:
+    # extracted_participant_data: Dict[str, ParticipantInfo]
+    from src.preprocess_data import ParticipantsData
+
+    # Load the data
     with open(filename, "r") as f:
         data = json.load(f)
+    participants_data = ParticipantsData(**data)
 
+    # Create unique IDs for problems
+    problems = set(p.problem for p in participants_data.participants.values())
+    problem_id_to_problem = {p.problem: f"P{i+1}" for i, p in enumerate(problems)}
+
+    # Create participants from the preprocessed data
     participants: List[Participant] = []
-    for participant_id, info in data.items():
-        problem = info.get("problem")
-        if not problem:
-            raise ValueError(f"Participant {participant_id} missing 'problem' field")
+    for id, info in participants_data.participants.items():
 
-        # Extract name and other metadata
-        name = info.get("name")
-        metadata = {k: v for k, v in info.items() if k not in ["problem", "name"]}
+        participant_id = id
+        full_name = info.name
+        problem_id = problem_id_to_problem[info.problem]
+        problem = info.problem
+        sponsoring_company = info.sponsoring_company
 
         participants.append(
-            Participant(id=participant_id, problem_id=problem, name=name, metadata=metadata)
+            Participant(
+                participant_id=participant_id,
+                full_name=full_name,
+                problem_id=problem_id,
+                problem=problem,
+                sponsoring_company=sponsoring_company,
+            )
         )
 
     return participants
 
 
-def load_judges_from_json(filename: str) -> Tuple[List[Judge], List[Judge]]:
+def load_preprocessed_judge_data(filename: str) -> Tuple[List[Judge], List[Judge]]:
     """Load judges from a JSON file and separate into specialized and flexible."""
+    from src.preprocess_data import JudgesData
+
     with open(filename, "r") as f:
         data = json.load(f)
+    judges_data = JudgesData(**data)
 
     specialized_judges: List[Judge] = []
     flexible_judges: List[Judge] = []
 
-    for judge_id, info in data.items():
-        problem = info.get("problem")
-        name = info.get("name")
-        metadata = {k: v for k, v in info.items() if k not in ["problem", "name"]}
+    # What we need for the Judge class:
+    # judge_id: str
+    # judge_type: JudgeType
+    # full_name: Optional[str] = None
+    # affiliation: Optional[str] = None  # company or university they are associated with
+    # problem_id: Optional[str] = None  # For specialized judges, this is their assigned problem
+    # problem: Optional[str] = None  # For specialized judges, this is their assigned problem
 
-        if problem is None:
-            # Flexible judge
+    # What is in the JudgeInfo?
+    # name: Optional[str] = Field(default=None, description="Optional display/full name of the judge")
+    # company: Optional[str] = Field(
+    #     default=None,
+    #     description="Company name for specialized judges (judges working at sponsoring companies), null for flexible judges (university/academic judges)",
+    # )
+
+    for id, info in judges_data.judges.items():
+        judge_id = id
+        full_name = info.name
+        affiliation = info.company
+        judge_type = JudgeType.FLEXIBLE if affiliation is None else JudgeType.SPECIALIZED
+
+        # TODO: From the affiliation, we need to determine the problem that is relevant for the judge
+        problem = None
+        problem_id = None
+
+        if judge_type == JudgeType.FLEXIBLE:
             flexible_judges.append(
                 Judge(
-                    id=judge_id,
+                    judge_id=judge_id,
                     judge_type=JudgeType.FLEXIBLE,
-                    problem=None,
-                    name=name,
-                    metadata=metadata,
+                    full_name=full_name,
+                    affiliation=affiliation,
+                    problem_id=problem_id,
+                    problem=problem,
                 )
             )
         else:
-            # Specialized judge
             specialized_judges.append(
                 Judge(
-                    id=judge_id,
+                    judge_id=judge_id,
                     judge_type=JudgeType.SPECIALIZED,
+                    full_name=full_name,
+                    affiliation=affiliation,
+                    problem_id=problem_id,
                     problem=problem,
-                    name=name,
-                    metadata=metadata,
                 )
             )
 
     return specialized_judges, flexible_judges
 
 
-def _ensure_data_dirs() -> None:
-    base_dir = _project_root()
-    os.makedirs(os.path.join(base_dir, "data/inputs"), exist_ok=True)
-    os.makedirs(os.path.join(base_dir, "data/processed"), exist_ok=True)
-    os.makedirs(os.path.join(base_dir, "data/outputs"), exist_ok=True)
-
-
-def _project_root() -> str:
-    """Return absolute path to the project root (one level up from this file's directory)."""
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
-
-
-def _resolve_path(path: str) -> str:
-    """Resolve relative paths to the project root if they don't exist as given."""
-    if not path:
-        return path
-    if os.path.isabs(path) and os.path.exists(path):
-        return path
-    if os.path.exists(path):
-        return path
-    candidate = os.path.join(_project_root(), path)
-    return candidate
-
-
-def _try_auto_preprocess(judges_path: str, participants_path: str) -> Tuple[str, str]:
-    """
-    If provided paths fail to load as JSON in expected schema, attempt to preprocess
-    using src.preprocess_data.preprocess_files and return the processed JSON paths.
-    """
-    # Resolve paths relative to project root if needed
-    judges_path_resolved = _resolve_path(judges_path)
-    participants_path_resolved = _resolve_path(participants_path)
-
+def _load_or_preprocess_data(
+    participants_path: str, judges_path: str
+) -> Tuple[List[Participant], List[Judge], List[Judge]]:
+    """Load or preprocess the data."""
     try:
-        _ = load_participants_from_json(participants_path_resolved)
-        _ = load_judges_from_json(judges_path_resolved)
-        return judges_path_resolved, participants_path_resolved
+        logging.info(f"Attempting to load participants from {participants_path}")
+        participants = load_preprocessed_participant_data(participants_path)
+        logging.info(f"Attempting to load judges from {judges_path}")
+        specialized_judges, flexible_judges = load_preprocessed_judge_data(judges_path)
     except Exception:
-        # Fallback import so running as `python src/judge_assignment_algorithm.py` works
-        try:
-            from src.preprocess_data import preprocess_files
-        except ModuleNotFoundError:
-            from preprocess_data import preprocess_files  # type: ignore
+        logging.info("Input files not in expected JSON format. Preprocessing...")
 
-        _ensure_data_dirs()
+        from src.preprocess_data import preprocess_files
+
         processed_dir = os.path.join(_project_root(), "data/processed")
-        processed_judges, processed_participants = preprocess_files(
-            judges_input_path=judges_path_resolved,
-            participants_input_path=participants_path_resolved,
+        processed_judges_path, processed_participants_path = preprocess_files(
+            judges_input_path=judges_path,
+            participants_input_path=participants_path,
             processed_dir=processed_dir,
         )
-        return processed_judges, processed_participants
 
+        # Load the processed data
+        logging.info(f"Loading participants from {processed_participants_path}")
+        participants = load_preprocessed_participant_data(processed_participants_path)
+        logging.info(f"Loading judges from {processed_judges_path}")
+        specialized_judges, flexible_judges = load_preprocessed_judge_data(processed_judges_path)
 
-def _serialize_groups(groups: List[ParticipantGroup]) -> List[Dict[str, Any]]:
-    serialized: List[Dict[str, Any]] = []
-    for g in groups:
-        serialized.append(
-            {
-                "group_id": g.group_id,
-                "participants": [asdict(p) for p in g.participants],
-                "assigned_judges": [
-                    {
-                        "id": j.id,
-                        "judge_type": j.judge_type.value,
-                        "problem": j.problem,
-                        "name": j.name,
-                    }
-                    for j in g.assigned_judges
-                ],
-                "problems_covered": sorted(list(g.problems_covered)),
-                "constraint_violations": [
-                    {
-                        "group_id": v.group_id,
-                        "violation_type": v.violation_type.value,
-                        "details": v.details,
-                    }
-                    for v in g.constraint_violations
-                ],
-            }
-        )
-    return serialized
+    return participants, specialized_judges, flexible_judges
 
 
 def main():
@@ -662,25 +651,15 @@ def main():
         action="store_true",
         help="Disable simulated annealing optimization",
     )
-    parser.add_argument(
-        "--example",
-        action="store_true",
-        help="Run with example data instead of JSON files",
-    )
     parser.add_argument("--config", type=str, help="Path to JSON file with algorithm configuration")
     parser.add_argument("--seed", type=int, help="Random seed for reproducible results")
 
     args = parser.parse_args()
-
-    _ensure_data_dirs()
-
-    if args.example:
-        # Run example mode
-        run_examples()
-        return
-
     if not args.judges or not args.participants:
         parser.error("--judges and --participants are required unless using --example")
+
+    # Ensure data directories exist
+    _ensure_data_dirs()
 
     # Load algorithm config if provided
     config = AlgorithmConfig()
@@ -699,24 +678,13 @@ def main():
         config.RANDOM_SEED = args.seed
 
     # Attempt to load data; if it fails, preprocess automatically
-    # Resolve provided input paths to be robust to current working directory
     participants_path = _resolve_path(args.participants)
     judges_path = _resolve_path(args.judges)
 
-    try:
-        logging.info(f"Attempting to load participants from {participants_path}")
-        participants = load_participants_from_json(participants_path)
-        logging.info(f"Attempting to load judges from {judges_path}")
-        specialized_judges, flexible_judges = load_judges_from_json(judges_path)
-    except Exception:
-        logging.info("Input files not in expected JSON format. Preprocessing...")
-        processed_judges, processed_participants = _try_auto_preprocess(
-            judges_path, participants_path
-        )
-        logging.info(f"Loading participants from {processed_participants}")
-        participants = load_participants_from_json(processed_participants)
-        logging.info(f"Loading judges from {processed_judges}")
-        specialized_judges, flexible_judges = load_judges_from_json(processed_judges)
+    # Load or preprocess the data
+    participants, specialized_judges, flexible_judges = _load_or_preprocess_data(
+        participants_path, judges_path
+    )
 
     # Extract unique problems
     problems = set(p.problem_id for p in participants)
@@ -730,13 +698,13 @@ def main():
         args.room_group_size,
         config=config,
     )
-
+    # Run the algorithm
     groups, stats = algorithm.solve(use_optimization=not args.no_optimization)
 
     # Save results
     results_path = os.path.join(_project_root(), "data/outputs", "assignment_results.json")
     with open(results_path, "w") as f:
-        json.dump({"groups": _serialize_groups(groups), "stats": stats}, f, indent=2)
+        json.dump({"groups": _to_json_compatible(groups), "stats": stats}, f, indent=2)
     logging.info(f"Saved results to {results_path}")
 
     # Print results summary to logs
@@ -770,155 +738,6 @@ def main():
                 logging.warning(
                     f"    - {violation.violation_type.value}: {violation.details} (cost: {cost})"
                 )
-
-
-def create_challenging_example():
-    """Create a more challenging example with insufficient judges."""
-    # Create problems
-    problems = {"P1", "P2", "P3", "P4", "P5"}
-
-    # Create participants (20 total)
-    participants: List[Participant] = []
-    participant_distribution = {"P1": 6, "P2": 5, "P3": 4, "P4": 3, "P5": 2}
-
-    participant_id = 1
-    for problem, count in participant_distribution.items():
-        for _ in range(count):
-            participants.append(Participant(f"X{participant_id}", problem))
-            participant_id += 1
-
-    # Create specialized judges (fewer than ideal)
-    specialized_judges = [
-        Judge("Z1_1", JudgeType.SPECIALIZED, "P1"),
-        Judge("Z1_2", JudgeType.SPECIALIZED, "P2"),
-        Judge("Z1_3", JudgeType.SPECIALIZED, "P3"),
-        # Note: No specialized judge for P4 and P5
-    ]
-
-    # Create flexible judges (limited number)
-    flexible_judges = [
-        Judge("Z2_1", JudgeType.FLEXIBLE, None),
-        Judge("Z2_2", JudgeType.FLEXIBLE, None),
-    ]
-
-    room_group_size = 5
-
-    return participants, problems, specialized_judges, flexible_judges, room_group_size
-
-
-def create_example():
-    """Create an example instance of the problem."""
-    # Create problems
-    problems = {"P1", "P2", "P3", "P4"}
-
-    # Create participants
-    participants = [
-        Participant("X1", "P1"),
-        Participant("X2", "P1"),
-        Participant("X3", "P1"),
-        Participant("X4", "P2"),
-        Participant("X5", "P2"),
-        Participant("X6", "P3"),
-        Participant("X7", "P3"),
-        Participant("X8", "P4"),
-        Participant("X9", "P1"),
-        Participant("X10", "P2"),
-        Participant("X11", "P3"),
-        Participant("X12", "P4"),
-    ]
-
-    # Create specialized judges
-    specialized_judges = [
-        Judge("Z1_1", JudgeType.SPECIALIZED, "P1"),
-        Judge("Z1_2", JudgeType.SPECIALIZED, "P1"),
-        Judge("Z1_3", JudgeType.SPECIALIZED, "P2"),
-        Judge("Z1_4", JudgeType.SPECIALIZED, "P3"),
-        Judge("Z1_5", JudgeType.SPECIALIZED, "P4"),
-    ]
-
-    # Create flexible judges
-    flexible_judges = [
-        Judge("Z2_1", JudgeType.FLEXIBLE, None),
-        Judge("Z2_2", JudgeType.FLEXIBLE, None),
-        Judge("Z2_3", JudgeType.FLEXIBLE, None),
-    ]
-
-    room_group_size = 4
-
-    return participants, problems, specialized_judges, flexible_judges, room_group_size
-
-
-def run_examples():
-    """Run the built-in examples."""
-    logging.info("=== EXAMPLE 1: Basic Example ===")
-    (
-        participants,
-        problems,
-        specialized_judges,
-        flexible_judges,
-        room_group_size,
-    ) = create_example()
-
-    algorithm = JudgeAssignmentAlgorithm(
-        participants, problems, specialized_judges, flexible_judges, room_group_size
-    )
-
-    # Try without optimization
-    logging.info("\n--- Without Optimization ---")
-    _, stats = algorithm.solve(use_optimization=False)
-    logging.info(f"Grouping cost: {stats['grouping_cost']}")
-    logging.info(f"Total violations: {stats['total_violations']}")
-    logging.info(f"Weighted violation cost: {stats['weighted_violation_cost']}")
-
-    # Try with optimization
-    logging.info("\n--- With Optimization ---")
-    _, stats_opt = algorithm.solve(use_optimization=True)
-    logging.info(f"Grouping cost: {stats_opt['grouping_cost']}")
-    logging.info(f"Total violations: {stats_opt['total_violations']}")
-    logging.info(f"Weighted violation cost: {stats_opt['weighted_violation_cost']}")
-    logging.info(f"Average problems per group: {stats_opt['average_problems_per_group']:.2f}")
-
-    logging.info("\n\n=== EXAMPLE 2: Challenging Example ===")
-    (
-        participants2,
-        problems2,
-        specialized_judges2,
-        flexible_judges2,
-        room_group_size2,
-    ) = create_challenging_example()
-
-    algorithm2 = JudgeAssignmentAlgorithm(
-        participants2, problems2, specialized_judges2, flexible_judges2, room_group_size2
-    )
-
-    groups2, stats2 = algorithm2.solve(use_optimization=True)
-
-    logging.info("\nProblem Setup:")
-    logging.info(f"- Total participants: {len(participants2)}")
-    logging.info(f"- Total problems: {len(problems2)}")
-    logging.info(f"- Specialized judges: {len(specialized_judges2)}")
-    logging.info(f"- Flexible judges: {len(flexible_judges2)}")
-    logging.info(f"- Batch size: {room_group_size2}")
-
-    logging.info("\nSolution Statistics:")
-    logging.info(f"- Total groups: {stats2['total_groups']}")
-    logging.info(f"- Total violations: {stats2['total_violations']}")
-    logging.info(f"- Weighted violation cost: {stats2['weighted_violation_cost']:.2f}")
-    logging.info(f"- Violations by type: {stats2['violations_by_type']}")
-    logging.info(f"- Grouping cost: {stats2['grouping_cost']}")
-
-    logging.info("\nDetailed Group Assignments:")
-    for i, group in enumerate(groups2):
-        logging.info(f"\nGroup {i+1}:")
-        logging.info(f"  Participants: {[p.display_name() for p in group.participants]}")
-        logging.info(f"  Problems: {set(p.problem_id for p in group.participants)}")
-        logging.info(f"  Judges: {[j.display_name() for j in group.assigned_judges]}")
-        logging.info(f"  Judge count: {len(group.assigned_judges)}")
-
-        if group.constraint_violations:
-            logging.info("  Violations:")
-            for violation in group.constraint_violations:
-                logging.warning(f"    - {violation.violation_type.value}: {violation.details}")
 
 
 if __name__ == "__main__":

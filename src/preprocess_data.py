@@ -151,6 +151,15 @@ def _extract_with_llm(
 ) -> BaseModel:
     """Extract structured data from text using Gemini LLM with Pydantic schema."""
 
+    if data_type == "company_to_problem":
+        prompt = f"""
+        You are an expert at extracting structured information from raw text. The text describes a list of companies in a hackathon, also giving information on the problem that they are tackling (and potentially the sponsoring company).
+        
+        Given the following text containing company descriptions, extract the following structured information 
+        for each company. 
+        """
+        # TODO: Implement this
+
     if data_type == "participants":
         prompt = f"""
         You are an expert at extracting structured information from raw text. The text describes a list of participants in a hackathon, also giving information on the problem that they are tackling (and potentially the sponsoring company).
@@ -184,7 +193,7 @@ def _extract_with_llm(
         TASK: Given the following text containing judge descriptions, extract the following structured information 
         for each judge. 
         - name: the name of the judge (REQUIRED - extract from text, never use generic names)
-        - problem: The company name if they work at one of the sponsoring companies, or null if they are university/academic/independent judges
+        - company: The company name if they work at one of the sponsoring companies, or null if they are university/academic/independent judges
         
         CONTEXT: In this hackathon, problems are sponsored by companies. Judges can be either:
         1. SPECIALIZED: Work at one of the sponsoring companies and judge their company's problem
@@ -194,10 +203,10 @@ def _extract_with_llm(
         Raw text: {text}
         
         RULES for determining specialization:
-        - If the judge works at a company that matches one of the known sponsoring companies, set that company as their problem
-        - If the judge works at a university, is described as academic, or works at a non-sponsoring organization, set problem to null
-        - If they are described as "flexible", "generalist", "can judge any category", or similar, set problem to null
-        - If no company affiliation is mentioned or the company doesn't match known sponsors, set problem to null
+        - If the judge works at a company that matches one of the known sponsoring companies, set that company as their problem. USE THE EXACT NAME OF THE COMPANY as given in the list of known companies.
+        - If the judge works at a university, is described as academic, or works at a non-sponsoring organization, set company to null
+        - If they are described as "flexible", "generalist", "can judge any category", or similar, set company to null
+        - If no company affiliation is mentioned or the company doesn't match known sponsors, set company to null
         
         Return the data in JSON format.
         """
@@ -224,7 +233,7 @@ def preprocess_files(
     participants_input_path: str,
     processed_dir: str = "data/processed",
     config: Optional[PreprocessingConfig] = None,
-) -> Tuple[str, str]:
+) -> Tuple[str, str]:  # judges_out_path, participants_out_path
     """
     Preprocess judges and participants files using LLM extraction with Pydantic models.
 
@@ -240,7 +249,7 @@ def preprocess_files(
         config: Optional preprocessing configuration
 
     Returns:
-        Tuple of (judges_json_path, participants_json_path)
+        Tuple of (judges_out_path, participants_out_path)
     """
     if config is None:
         config = PreprocessingConfig()
@@ -296,12 +305,13 @@ def preprocess_files(
     judges_out_path = os.path.join(processed_dir, "judges.json")
 
     with open(participants_out_path, "w", encoding="utf-8") as f:
-        json.dump(participants_data.participants, f, indent=2)
+        json.dump(participants_data, f, indent=2)
 
     with open(judges_out_path, "w", encoding="utf-8") as f:
-        json.dump(judges_data.judges, f, indent=2)
+        json.dump(judges_data, f, indent=2)
 
-    return judges_data, participants_data
+    # Return the paths to the processed files
+    return judges_out_path, participants_out_path
 
 
 def main():
